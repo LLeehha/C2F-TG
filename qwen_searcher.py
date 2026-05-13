@@ -1,8 +1,8 @@
 """
-QwenTStarSearcher: VLM-based temporal video search using Qwen2-VL.
+QwenTStarSearcher: Minimal VLM-based temporal video search using Qwen2-VL.
 
-This module extends TStarSearcher to use Vision-Language Models (VLMs)
-for temporal grounding instead of traditional object detection.
+This module provides a lightweight implementation that only keeps necessary
+components for VLM-based temporal grounding.
 """
 
 import numpy as np
@@ -10,33 +10,30 @@ import torch
 import gc
 import re
 import json
+from typing import List, Tuple, Optional
 from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import gaussian_filter1d
 
-from videomind.TStar.interface_searcher import TStarSearcher
-from videomind.dataset.utils import smart_resize
+from interface_searcher import TStarSearcher
+from utils import smart_resize
 
 
 class DummyHeuristic:
     """Placeholder heuristic for VLM-based search (no object detection needed)."""
 
     def __init__(self):
-        self.texts = []
-        self.detections_inbatch = []
+        pass
 
     def reparameterize_object_list(self, target_objects, cue_objects):
         pass
-
-    def bbox_visualization(self, images, detections_inbatch):
-        return images
 
 
 class QwenTStarSearcher(TStarSearcher):
     """
     VLM-based temporal searcher using Qwen2-VL for video grounding.
 
-    Instead of object detection, this class uses a Vision-Language Model
-    to score frame grids based on natural language queries.
+    This class uses Vision-Language Models to score frame grids based on
+    natural language queries, without requiring object detection.
     """
 
     def __init__(self, qwen_model, processor, device, **kwargs):
@@ -47,9 +44,28 @@ class QwenTStarSearcher(TStarSearcher):
             qwen_model: Qwen2-VL model instance
             processor: Qwen2-VL processor for input preparation
             device: Device for model inference (cuda/cpu)
-            **kwargs: Additional arguments passed to TStarSearcher
+            **kwargs: Additional arguments:
+                - video_path (str): Path to video file
+                - target_objects (List[str]): Natural language query/description
+                - search_nframes (int): Number of keyframes to search for
+                - image_grid_shape (Tuple[int, int]): Grid dimensions
+                - search_budget (float): Fraction of frames to process
+                - output_dir (Optional[str]): Directory for outputs
+
+        Note:
+            The following parameters from TStarSearcher are not used:
+            - cue_objects: VLM doesn't distinguish primary/cue objects
+            - confidence_threshold: VLM doesn't use binary detection
+            - object2weight: VLM doesn't need object-specific weights
         """
+        # Set dummy heuristic (VLM doesn't need real object detector)
         kwargs['heuristic'] = DummyHeuristic()
+
+        # Set unused parameters to None/empty to avoid confusion
+        kwargs['cue_objects'] = []
+        kwargs.setdefault('confidence_threshold', 0.5)  # Kept for base class compatibility
+        kwargs.setdefault('object2weight', {})
+
         super().__init__(**kwargs)
 
         self.qwen_model = qwen_model
@@ -79,7 +95,12 @@ class QwenTStarSearcher(TStarSearcher):
         )
 
     @torch.inference_mode()
-    def imageGridScoreFunction(self, images, output_dir, image_grids):
+    def imageGridScoreFunction(
+        self,
+        images: List[np.ndarray],
+        output_dir: Optional[str],
+        image_grids: Tuple[int, int]
+    ) -> Tuple[np.ndarray, List[List[List[str]]]]:
         """
         Score image grids using VLM instead of object detection.
 
@@ -206,7 +227,7 @@ class QwenTStarSearcher(TStarSearcher):
 
         return np.stack(confidence_maps), detected_objects_maps
 
-    def _parse_vlm_response(self, response: str, expected_cells: int) -> list:
+    def _parse_vlm_response(self, response: str, expected_cells: int) -> List[Tuple[int, float]]:
         """
         Parse VLM JSON response with multiple fallback strategies.
 
@@ -263,16 +284,90 @@ class QwenTStarSearcher(TStarSearcher):
 
         return parsed
 
-    def verify_and_remove_target(self, frame_sec, detected_objects, confidence_threshold):
+    def verify_and_remove_target(
+        self,
+        frame_sec: int,
+        detected_objects: List[str],
+        confidence_threshold: float
+    ) -> bool:
         """
         Disable target verification for VLM-based search.
 
         VLM operates on natural language queries rather than discrete object detection,
         so traditional verification is not applicable.
+
+        Returns:
+            Always returns False (no verification performed)
         """
         return False
 
-    def pop_frames(self, video_path=None, num_samples=8):
+    def search(self) -> Tuple[List[np.ndarray], List[float]]:
+        """
+        Perform VLM-based temporal search to locate relevant moments.
+
+        This method runs iterative search using the VLM to score frame grids,
+        then extracts the top-k anchor timestamps.
+
+        Returns:
+            Tuple of (frames, timestamps)
+            - frames: Empty list (not used in VLM-based search)
+            - timestamps: List of anchor timestamps in seconds
+        """
+        print(f"\n[T* Search] Starting VLM-based search")
+        print(f"  Video duration: {self.duration:.1f}s")
+        print(f"  Search budget: {self.search_budget} frames")
+        print(f"  Target query: {self.target_objects}")
+
+        iteration = 0
+        max_iterations = 5  # Default number of iterations
+
+        while self.search_budget > 0 and iteration < max_iterations:
+            iteration += 1
+            print(f"\n[Iteration {iteration}/{max_iterations}]")
+
+            grid_rows, grid_cols = self.image_grid_shape
+            num_frames_in_grid = grid_rows * grid_cols
+
+            # Sample frames based on current probability distribution
+            sampled_frame_secs, frames = self.sample_frames(num_frames_in_grid)
+            self.search_budget -= num_frames_in_grid
+
+            # Create grid image
+            grid_image = self.create_image_grid(frames, grid_rows, grid_cols)
+
+            # Score grid using VLM
+            confidence_maps, detected_objects_maps = self.score_image_grids(
+                images=[grid_image],
+                image_grids=self.image_grid_shape
+            )
+
+            # Update frame distribution based on VLM scores
+            frame_confidences, frame_detected_objects = self.update_frame_distribution(
+                sampled_frame_indices=sampled_frame_secs,
+                confidence_maps=confidence_maps,
+                detected_objects_maps=detected_objects_maps
+            )
+
+            print(f"  Sampled {len(sampled_frame_secs)} frames")
+            print(f"  Max confidence: {max(frame_confidences):.3f}")
+            print(f"  Remaining budget: {self.search_budget}")
+
+        # Extract top-k anchors
+        print(f"\n[T* Search] Extracting anchors...")
+        k_frames, time_stamps = self.pop_frames(
+            video_path=self.video_path,
+            num_samples=self.search_nframes
+        )
+
+        print(f"[T* Search] Complete! Found {len(time_stamps)} anchors")
+
+        return k_frames, time_stamps
+
+    def pop_frames(
+        self,
+        video_path: Optional[str] = None,
+        num_samples: int = 8
+    ) -> Tuple[List, List[float]]:
         """
         Extract top frames using peak suppression with temporal smoothing.
 
@@ -328,7 +423,12 @@ class QwenTStarSearcher(TStarSearcher):
         print(f"\n[T* Info] Peak-suppressed extraction selected timestamps: {time_stamps}")
         return [], time_stamps
 
-    def create_image_grid(self, frames, grid_rows, grid_cols):
+    def create_image_grid(
+        self,
+        frames: List[np.ndarray],
+        grid_rows: int,
+        grid_cols: int
+    ) -> np.ndarray:
         """
         Create image grid with automatic padding/truncation for mismatched frame counts.
 
