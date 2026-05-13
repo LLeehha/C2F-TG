@@ -160,100 +160,6 @@ def phase2_window_generation(time_stamps, duration):
     return merged
 
 
-def phase3_grounder_inference(video_path, query, windows, grounder):
-    """
-    Phase 3: Run grounder on each window.
-
-    Args:
-        video_path: Path to video file
-        query: Natural language query
-        windows: List of [start, end] windows
-        grounder: Temporal grounding model
-
-    Returns:
-        List of predictions with confidence scores
-    """
-    print("\n" + "="*80)
-    print("PHASE 3: GROUNDER INFERENCE")
-    print("="*80)
-
-    all_predictions = []
-
-    for i, (w_start, w_end) in enumerate(windows):
-        print(f"\n[Window {i+1}/{len(windows)}] Processing [{w_start:.1f}s, {w_end:.1f}s]")
-
-        # Run grounder on this window
-        predictions = grounder.predict(
-            video_path=video_path,
-            query=query,
-            window=[w_start, w_end],
-            top_k=10
-        )
-
-        print(f"  Generated {len(predictions)} predictions")
-        all_predictions.extend(predictions)
-
-    print(f"\n[Phase 3 Complete] Total predictions: {len(all_predictions)}")
-
-    return all_predictions
-
-
-def phase4_aggregation(all_predictions, top_k=5):
-    """
-    Phase 4: Aggregate and deduplicate predictions.
-
-    Args:
-        all_predictions: List of predictions from all windows
-        top_k: Number of final predictions to return
-
-    Returns:
-        List of top-k deduplicated predictions
-    """
-    print("\n" + "="*80)
-    print("PHASE 4: AGGREGATION & DEDUPLICATION")
-    print("="*80)
-
-    if len(all_predictions) == 0:
-        print("[Warning] No predictions to aggregate")
-        return []
-
-    # Sort by confidence
-    all_predictions.sort(key=lambda x: x['confidence'], reverse=True)
-
-    print(f"\n[Sorting] Top-10 by confidence:")
-    for i, pred in enumerate(all_predictions[:10]):
-        print(f"  {i+1}. [{pred['span'][0]:.1f}s, {pred['span'][1]:.1f}s] "
-              f"conf={pred['confidence']:.3f}")
-
-    # Deduplicate based on temporal IoU
-    final_predictions = []
-    iou_threshold = 0.75
-
-    for pred in all_predictions:
-        is_duplicate = False
-
-        for final_pred in final_predictions:
-            iou = compute_temporal_iou(pred['span'], final_pred['span'])
-            if iou > iou_threshold:
-                is_duplicate = True
-                break
-
-        if not is_duplicate:
-            final_predictions.append(pred)
-
-        if len(final_predictions) >= top_k:
-            break
-
-    print(f"\n[Deduplication] After removing duplicates (IoU > {iou_threshold}):")
-    for i, pred in enumerate(final_predictions):
-        print(f"  {i+1}. [{pred['span'][0]:.1f}s, {pred['span'][1]:.1f}s] "
-              f"conf={pred['confidence']:.3f}")
-
-    print(f"\n[Phase 4 Complete] Final {len(final_predictions)} predictions")
-
-    return final_predictions
-
-
 def main():
     """Main function demonstrating the complete pipeline."""
     # Configuration
@@ -283,14 +189,6 @@ def main():
     time_stamps, searcher = phase1_anchor_localization(
         video_path, query, duration, model, processor, device
     )
-
-    # Visualize
-    searcher.plot_single_iteration_score(
-        save_path="phase1_anchors.png",
-        selected_timestamps=time_stamps,
-        iteration_name="T* Search Result"
-    )
-    print("\n[Visualization] Saved to phase1_anchors.png")
 
     # Phase 2: Window Generation
     windows = phase2_window_generation(time_stamps, duration)
