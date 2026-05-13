@@ -29,9 +29,3 @@ Extends `TStarSearcher` to use **Vision-Language Models** instead of object dete
 - **Temporal Smoothing**: Applies Gaussian smoothing for continuity
 - **Spatial Diffusion**: Spreads scores to neighboring cells
 
-**VLM Prompt Design:**
-```
-Query: [natural language description]
-Grid: 4×4 frames with red indices
-Output: JSON with 4 candidates (frame_index, confidence)
-```
