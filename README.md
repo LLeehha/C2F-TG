@@ -10,11 +10,6 @@ Official implementation of **C2F-TG**, a semantic-guided coarse-to-fine framewor
 > **C2F-TG: Semantic-Guided Coarse-to-Fine MLLMs for Video Reasoning**
 > Jun Yang, Haijiang Li, Jisheng Dang, Wencan Zhang, Peng Zhou, Bimei Wang, Hong Peng, Wei-Shi Zheng, Qi Tian, Tat-Seng Chua
 
-## 🖼️ Framework Figure
-
-```text
-assets/Fram.pdf
-```
 
 ## 🔍 Overview
 
