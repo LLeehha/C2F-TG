@@ -13,7 +13,7 @@ Official implementation of **C2F-TG**, a semantic-guided coarse-to-fine framewor
 ## 🖼️ Framework Figure
 
 ```text
-assets/framework.png
+assets/Fram.pdf
 ```
 
 ## 🔍 Overview
